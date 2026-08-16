@@ -1,0 +1,11 @@
+# Optional safety override. The default compose file intentionally has no
+# container CPU/RAM cap and can use all resources assigned to Docker Engine.
+services:
+  app:
+    deploy:
+      resources:
+        limits:
+          cpus: "${LOADGEN_CPU_LIMIT:-2.0}"
+          memory: "${LOADGEN_MEMORY_LIMIT:-2G}"
+        reservations:
+          memory: "${LOADGEN_MEMORY_RESERVATION:-256M}"

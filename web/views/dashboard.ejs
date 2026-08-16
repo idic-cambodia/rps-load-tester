@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>RPS Load Tester</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body class="console">
+    <header class="topbar">
+      <a class="brand" href="#active"><span>↗</span> rps-load-tester</a
+      ><span class="authorization">● Authorized testing</span>
+      <div class="top-actions">
+        <span id="connection" class="connection">Connecting</span
+        ><span id="run-state" class="run-state">Idle</span>
+      </div>
+    </header>
+    <main class="shell">
+      <aside class="config-rail" id="new">
+        <form id="test-form">
+          <input type="hidden" id="csrf" value="<%= csrfToken %>" />
+          <div class="rail-section">
+            <div class="section-title">
+              <span>Target</span><span class="verified">Allowlisted</span>
+            </div>
+            <div class="method-url">
+              <select name="method" aria-label="HTTP method">
+                <option>GET</option>
+                <option>POST</option>
+                <option>PUT</option>
+                <option>PATCH</option>
+                <option>DELETE</option></select
+              ><select name="baseUrl" aria-label="Approved base URL">
+                <% targets.forEach(t=>{ %>
+                <option>https://<%= t %></option>
+                <% }) %>
+              </select>
+            </div>
+            <input
+              name="endpoint"
+              aria-label="Endpoint path"
+              value="/healthz"
+              required
+            />
+          </div>
+          <div class="rail-section">
+            <div class="section-title"><span>Test profile</span></div>
+            <label
+              >Name<input
+                name="name"
+                value="Safe smoke test"
+                required
+                maxlength="100" /></label
+            ><label
+              >Preset<select name="preset">
+                <option>smoke</option>
+                <option>baseline</option>
+                <option>load</option>
+                <option>stress</option>
+                <option>spike</option>
+                <option>soak</option>
+                <option value="reverse-proxy">reverse-proxy</option>
+                <option>api</option>
+                <option value="database-api">database-api</option>
+              </select></label
+            >
+            <div id="preset-help" class="preset-help" aria-live="polite"></div>
+            <button type="button" id="preset-guide-button" class="guide-button">
+              View all preset guidance
+            </button>
+            <div id="preset-guide" class="preset-guide" hidden></div>
+          </div>
+          <div class="rail-section">
+            <div class="section-title">
+              <span>Load configuration</span
+              ><span>Max <%= maxRps.toLocaleString() %></span>
+            </div>
+            <label class="auto-config"
+              ><input id="auto-config" type="checkbox" checked /><span
+                >Auto-calculate starting values from Target RPS and preset</span
+              ></label
+            ><p class="load-example">
+              Example: Start 10 → Target 100 RPS, ramp up for 30s, hold for
+              60s, then ramp down for 15s. Total planned duration: 105s.
+            </p>
+            <label class="target-primary"
+              >Target RPS
+              <span
+                class="has-tooltip info-tooltip"
+                tabindex="0"
+                data-tooltip="Target RPS is the highest planned request arrival rate. Example: 100 means k6 tries to start 100 request iterations each second during the steady stage. It is a goal, not a guarantee; achieved RPS can be lower."
+                >ⓘ</span
+              ><input
+                name="targetRps"
+                type="number"
+                min="1"
+                max="<%= maxRps %>"
+                value="10"
+            /></label>
+            <div class="compact-grid calculated-fields">
+              <label
+                >Start RPS
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Start RPS is the rate at the beginning of the test. Starting low lets you observe the system before increasing load. Example: start at 10 RPS and ramp toward 100 RPS.">ⓘ</span
+                ><input
+                  name="startingRps"
+                  type="number"
+                  min="1"
+                  value="10" /></label
+              ><label
+                >Ramp up
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Ramp up is how many seconds k6 takes to increase from Start RPS to Target RPS. A longer ramp is gentler and makes the capacity limit easier to identify. Example: 10 to 100 RPS over 30 seconds.">ⓘ</span
+                ><input
+                  name="rampUpSeconds"
+                  type="number"
+                  min="0"
+                  value="0"
+                /><small>seconds</small></label
+              ><label
+                >Steady
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Steady is how long k6 tries to hold the Target RPS after ramp-up. This is the best stage for comparing achieved RPS and latency with your target. Example: maintain 100 RPS for 60 seconds.">ⓘ</span
+                ><input
+                  name="steadySeconds"
+                  type="number"
+                  min="1"
+                  value="30"
+                /><small>seconds</small></label
+              ><label
+                >Ramp down
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Ramp down is how many seconds k6 takes to reduce traffic after the steady stage. It avoids ending the load abruptly. Example: reduce from 100 RPS toward the finishing rate over 15 seconds.">ⓘ</span
+                ><input
+                  name="rampDownSeconds"
+                  type="number"
+                  min="0"
+                  value="0"
+                /><small>seconds</small></label
+              ><label
+                >Max VUs
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Max VUs is the maximum number of concurrent k6 workers available to start iterations. VUs are not RPS. Estimated concurrency is RPS × average response time in seconds. At 100 RPS and 0.2s average latency, about 20 concurrent VUs are needed, plus headroom. Too few VUs causes dropped iterations.">ⓘ</span
+                ><input name="maxVus" type="number" min="1" value="100"
+              /></label>
+            </div>
+            <p id="calculation-note" class="helper"></p>
+            <div
+              id="high-load-confirmation"
+              class="high-load-confirmation"
+              hidden
+            >
+              <strong>High-load confirmation required</strong>
+              <p>
+                Type the exact selected hostname and Target RPS. These fields
+                are intentionally not auto-filled.
+              </p>
+              <label
+                >Confirmation domain<input
+                  name="confirmDomain"
+                  autocomplete="off"
+                  placeholder="Exact hostname only" /></label
+              ><label
+                >Confirmation RPS<input
+                  name="confirmRps"
+                  type="number"
+                  min="10001"
+                  autocomplete="off"
+                  placeholder="Exact Target RPS"
+              /></label>
+            </div>
+          </div>
+          <details>
+            <summary>Request options</summary>
+            <div class="details-body">
+              <label
+                >Timeout (ms)
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Maximum time to wait for one response before that request is recorded as a timeout. Example: 5000 ms means five seconds. A timeout can appear as HTTP 0 because no HTTP response was received.">ⓘ</span
+                ><input
+                  name="requestTimeoutMs"
+                  type="number"
+                  min="100"
+                  value="5000" /></label
+              ><label
+                >Expected status
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="The HTTP status considered successful for this test. For a healthy GET endpoint this is usually 200. A different returned status fails the check.">ⓘ</span
+                ><input
+                  name="expectedStatus"
+                  type="number"
+                  min="100"
+                  max="599"
+                  value="200" /></label
+              ><label
+                >Think time (ms)
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="A pause after each request iteration. Think time models user delay, but it also requires more VUs to maintain the same RPS. Use 0 for a health-endpoint capacity test unless a pause is intentional.">ⓘ</span
+                ><input
+                  name="thinkTimeMs"
+                  type="number"
+                  min="0"
+                  value="0" /></label
+              ><label
+                >Generator instances
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Number of approved load-generator workers planned for the test. Local execution currently uses one generator unless a distributed provider is configured; increasing this value alone does not create extra machines.">ⓘ</span
+                ><input
+                  name="instances"
+                  type="number"
+                  min="1"
+                  value="1" /></label
+              ><label
+                >Headers (JSON)<textarea name="headers">{}</textarea></label
+              ><label>Query (JSON)<textarea name="query">{}</textarea></label
+              ><label>JSON body<textarea name="body"></textarea></label>
+            </div>
+          </details>
+          <details>
+            <summary>Authentication</summary>
+            <div class="details-body">
+              <label
+                >Type<select name="authType">
+                  <option value="none">None</option>
+                  <option value="basic">Basic</option>
+                  <option value="bearer">Bearer</option>
+                  <option value="custom">Custom header</option>
+                </select></label
+              ><label
+                >Basic username<input
+                  name="authUsername"
+                  autocomplete="username"
+                  placeholder="API username" /></label
+              ><label
+                >Secret environment variable<input
+                  name="secretEnv"
+                  placeholder="STAGING_API_TOKEN" /></label
+              ><label
+                >Custom header name<input
+                  name="headerName"
+                  placeholder="x-api-key"
+              /></label>
+              <p class="helper">
+                Secrets remain masked and should be injected through the
+                environment. In Headers JSON, use
+                <code>{"xtoken":"$env:STUDENT_API_TOKEN"}</code> to reference
+                another secret without saving its value in history.
+              </p>
+            </div>
+          </details>
+          <details>
+            <summary>Emergency thresholds</summary>
+            <div class="details-body">
+              <label
+                >Error rate
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Emergency-stop limit expressed as a fraction. Example: 0.05 means stop when more than 5% of requests fail.">ⓘ</span
+                ><input
+                  name="maxErrorRate"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step=".001"
+                  value="0.05" /></label
+              ><label
+                >p95 latency (ms)
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Emergency-stop latency limit. p95 means 95% of responses were this fast or faster. Example: 1000 ms stops the run when p95 exceeds one second.">ⓘ</span
+                ><input
+                  name="maxP95Ms"
+                  type="number"
+                  min="1"
+                  value="1000" /></label
+              ><label
+                >429/502/503/504 rate
+                <span class="has-tooltip info-tooltip" tabindex="0" data-tooltip="Emergency-stop fraction for overload-related responses. Example: 0.05 means stop if these statuses exceed 5% of responses in the monitored window.">ⓘ</span
+                ><input
+                  name="maxBadStatusRate"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step=".001"
+                  value="0.05"
+              /></label>
+            </div>
+          </details>
+          <p id="message" class="form-message" aria-live="polite"></p>
+          <div class="rail-actions">
+            <button type="submit" class="secondary">Validate & save</button
+            ><button id="start" type="button" disabled>▷ Start test</button
+            ><button id="stop" type="button" disabled>Stop</button
+            ><button id="emergency" type="button" class="danger" disabled>
+              Emergency stop
+            </button>
+          </div>
+        </form>
+      </aside>
+      <section class="workspace" id="active">
+        <div class="safety-banner">
+          <span>Shielded execution</span>
+          <p>
+            Only verified, allowlisted targets can run. Redirects are disabled
+            and automatic stop thresholds remain active.
+          </p>
+        </div>
+        <div class="metric-strip">
+          <article
+            class="has-tooltip"
+            tabindex="0"
+            data-tooltip="Current RPS is the requests completed per second in the latest one-second window. Compare it with Target RPS. A lower value can indicate load-generator saturation, slow responses, insufficient VUs, or dropped iterations."
+          >
+            <span>Current RPS ⓘ</span><strong id="current-rps">—</strong
+            ><small>req/s · target <b id="target-rps">0</b></small>
+          </article>
+          <article
+            class="has-tooltip"
+            tabindex="0"
+            data-tooltip="p50 is the median response latency: half of requests were faster and half were slower. It describes a typical request, but does not show slow outliers."
+          >
+            <span>p50 latency ⓘ</span><strong id="p50">—</strong
+            ><small>milliseconds</small>
+          </article>
+          <article
+            class="has-tooltip"
+            tabindex="0"
+            data-tooltip="p99 is tail latency: 99% of requests completed at or below this time, while the slowest 1% took longer. A large gap between p50 and p99 suggests inconsistent performance."
+          >
+            <span>p99 latency ⓘ</span><strong id="p99">—</strong
+            ><small>milliseconds</small>
+          </article>
+          <article
+            class="has-tooltip"
+            tabindex="0"
+            data-tooltip="Error rate is for the latest sampling window. Total failed requests counts the entire run. Failures can include unexpected HTTP status codes, timeouts, connection errors, and failed k6 checks."
+          >
+            <span>Error rate ⓘ</span><strong id="error-rate">—</strong
+            ><small><b id="failures">0</b> total failed requests</small>
+          </article>
+        </div>
+        <nav class="tabs">
+          <button class="active" data-panel="metrics-panel">Live metrics</button
+          ><button data-panel="history-panel">History</button
+          ><button data-panel="planning-panel">Planning</button>
+        </nav>
+        <div id="metrics-panel" class="panel active">
+          <div class="chart-head">
+            <div>
+              <span>Throughput</span>
+              <h2>RPS + p95 latency</h2>
+            </div>
+            <div class="legend">
+              <span class="rps-dot">RPS</span
+              ><span class="latency-dot">p95</span>
+            </div>
+          </div>
+          <canvas
+            id="chart"
+            height="260"
+            aria-label="Live requests per second and p95 latency chart"
+          ></canvas>
+          <div class="run-details">
+            <div
+              class="has-tooltip"
+              tabindex="0"
+              data-tooltip="Virtual Users are k6 workers currently available to execute iterations. VUs are concurrency, not RPS. Slow responses need more VUs to maintain the same arrival rate."
+            >
+              <span>Active VUs ⓘ</span><b id="vus">0</b>
+            </div>
+            <div
+              class="has-tooltip"
+              tabindex="0"
+              data-tooltip="Total dropped iterations since this run started. These are iterations k6 planned but could not start, commonly because max VUs or generator resources were insufficient."
+            >
+              <span>Dropped total ⓘ</span><b id="dropped">0</b>
+            </div>
+            <div
+              class="has-tooltip"
+              tabindex="0"
+              data-tooltip="Total successful requests accumulated since this run started."
+            >
+              <span>Successful total ⓘ</span><b id="successful">0</b>
+            </div>
+            <div
+              class="has-tooltip"
+              tabindex="0"
+              data-tooltip="Elapsed is the time since this k6 process started. It includes ramp-up, steady load, and ramp-down stages."
+            >
+              <span>Elapsed ⓘ</span><b id="elapsed">0s</b>
+            </div>
+          </div>
+          <div class="distribution">
+            <div class="chart-head">
+              <div>
+                <span>Latest window</span>
+                <h2>Latency & status snapshot</h2>
+              </div>
+            </div>
+            <div id="status-bars" class="status-bars">
+              <p>No response data yet</p>
+            </div>
+          </div>
+        </div>
+        <div id="history-panel" class="panel">
+          <div class="panel-heading">
+            <div>
+              <span>Test records</span>
+              <h2>History & results</h2>
+            </div>
+          </div>
+          <div class="status-guide">
+            <div>
+              <b>Completed</b><span>k6 ended normally with exit code 0.</span>
+            </div>
+            <div>
+              <b>Failed</b
+              ><span
+                >k6 returned an error, a threshold/check failed, or execution
+                could not finish.</span
+              >
+            </div>
+            <div>
+              <b>Stopped</b><span>An administrator stopped the test.</span>
+            </div>
+            <div>
+              <b>Interrupted</b
+              ><span
+                >The application restarted while the record was active.</span
+              >
+            </div>
+            <div><b>Draft</b><span>Saved but not started.</span></div>
+          </div>
+          <p class="history-help">
+            Click <b>Details</b>, then read <b>Why this result?</b>. Completed
+            means execution finished successfully; it does not automatically
+            mean the target has enough capacity for every production situation.
+          </p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name / target</th>
+                  <th>Preset</th>
+                  <th>Status</th>
+                  <th>Requested</th>
+                  <th title="Whole-test average, including ramp-up and ramp-down">Avg RPS ⓘ</th>
+                  <th>p95</th>
+                  <th>Started</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="history-body"></tbody>
+            </table>
+          </div>
+        </div>
+        <div id="planning-panel" class="panel">
+          <div class="planning-grid">
+            <article>
+              <span>Approved targets</span>
+              <h2><%= targets.length %></h2>
+              <ul id="target-list">
+                <% targets.forEach(t=>{ %>
+                <li data-domain="<%= t %>"><%= t %> <em class="verify-state">…</em></li>
+                <% }) %>
+              </ul>
+              <form id="verify-form">
+                <select name="url" aria-label="Domain to verify">
+                  <% targets.forEach(t=>{ %>
+                  <option>https://<%= t %></option>
+                  <% }) %>
+                </select>
+                <input name="token" placeholder="Verification token" aria-label="Verification token" />
+                <button type="submit">Verify ownership</button>
+                <p id="verify-result"></p>
+              </form>
+              <p class="hint">
+                Domains already in <code>SERVER_ALLOWLIST_VERIFIED_TARGETS</code> don't need this. For
+                any other allowlisted domain, publish the token as a DNS TXT record at
+                <code>_load-test-verification.&lt;domain&gt;</code> or serve it at
+                <code>/.well-known/load-test-verification.txt</code>, then verify here.
+              </p>
+            </article>
+            <article>
+              <span>Distributed execution</span>
+              <h2><%= distributed ? 'Configured' : 'Planning only' %></h2>
+              <p>
+                Large rates require measured generator capacity, sufficient
+                bandwidth, and written infrastructure-owner authorization.
+              </p>
+            </article>
+            <article>
+              <span>Capacity rule</span>
+              <h2>Benchmark first</h2>
+              <p>
+                Server specifications cannot be calculated from RPS alone. Use
+                measured latency, response size, CPU, and safe RPS per server.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
